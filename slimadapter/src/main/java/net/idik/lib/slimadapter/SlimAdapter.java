@@ -1,9 +1,16 @@
 package net.idik.lib.slimadapter;
 
+import android.os.Handler;
+import android.os.Looper;
+import android.os.Message;
 import android.support.v7.util.DiffUtil;
 import android.support.v7.widget.RecyclerView;
 import android.view.ViewGroup;
 
+import net.idik.lib.slimadapter.diff.DefaultDiffCallback;
+import net.idik.lib.slimadapter.diff.SlimDiffUtil;
+import net.idik.lib.slimadapter.ex.loadmore.SlimExLoadMoreViewHolder;
+import net.idik.lib.slimadapter.ex.loadmore.SlimMoreLoader;
 import net.idik.lib.slimadapter.viewinjector.IViewInjector;
 
 import java.lang.reflect.ParameterizedType;
@@ -19,19 +26,64 @@ import java.util.Map;
 
 public class SlimAdapter extends AbstractSlimAdapter {
 
-    private SlimAdapter() {
+    private static final int WHAT_NOTIFY_DATA_SET_CHANGED = 1;
+    private final static int TYPE_LOAD_MORE = -10;
+
+    private SlimMoreLoader moreLoader;
+
+    protected SlimAdapter() {
+    }
+
+    public static SlimAdapter create() {
+        return new SlimAdapter();
+    }
+
+    public static <T extends SlimAdapter> T create(Class<T> clazz) {
+        try {
+            return clazz.newInstance();
+        } catch (InstantiationException e) {
+            e.printStackTrace();
+        } catch (IllegalAccessException e) {
+            e.printStackTrace();
+        }
+        return null;
     }
 
     private List<?> data;
 
+    private Handler uiHandler = new Handler(Looper.getMainLooper()) {
+        @Override
+        public void dispatchMessage(Message msg) {
+            switch (msg.what) {
+                case WHAT_NOTIFY_DATA_SET_CHANGED:
+                    notifyDataSetChanged();
+                    break;
+            }
+            super.dispatchMessage(msg);
+        }
+    };
+
     public SlimAdapter updateData(List<?> data) {
-        if (diffCallback == null) {
+        if (moreLoader != null) {
+            moreLoader.reset();
+        }
+        if (diffCallback == null || getItemCount() == 0 || data == null || data.size() == 0) {
             this.data = data;
-            notifyDataSetChanged();
+            if (Looper.myLooper() == Looper.getMainLooper()) {
+                notifyDataSetChanged();
+            } else {
+                uiHandler.removeMessages(WHAT_NOTIFY_DATA_SET_CHANGED);
+                uiHandler.sendEmptyMessage(WHAT_NOTIFY_DATA_SET_CHANGED);
+            }
         } else {
             DiffUtil.DiffResult diffResult = DiffUtil.calculateDiff(new SlimDiffUtil(this.data, data, diffCallback));
             this.data = data;
-            diffResult.dispatchUpdatesTo(this);
+            if (Looper.myLooper() == Looper.getMainLooper()) {
+                diffResult.dispatchUpdatesTo(this);
+            } else {
+                uiHandler.removeMessages(WHAT_NOTIFY_DATA_SET_CHANGED);
+                uiHandler.sendEmptyMessage(WHAT_NOTIFY_DATA_SET_CHANGED);
+            }
         }
         return this;
     }
@@ -42,12 +94,15 @@ public class SlimAdapter extends AbstractSlimAdapter {
 
     @Override
     public Object getItem(int position) {
-        return data.get(position);
+        if (moreLoader != null && position == data.size()) {
+            return moreLoader;
+        }
+        return data == null || data.size() <= position ? null : data.get(position);
     }
 
     @Override
     public int getItemCount() {
-        return data == null ? 0 : data.size();
+        return data == null ? 0 : data.size() + (moreLoader == null ? 0 : 1);
     }
 
     private List<Type> dataTypes = new ArrayList<>();
@@ -58,13 +113,21 @@ public class SlimAdapter extends AbstractSlimAdapter {
 
     private SlimDiffUtil.Callback diffCallback = null;
 
-    public SlimAdapter setDiffCallback(SlimDiffUtil.Callback diffCallback) {
+    public SlimAdapter enableDiff() {
+        enableDiff(new DefaultDiffCallback());
+        return this;
+    }
+
+    public SlimAdapter enableDiff(SlimDiffUtil.Callback diffCallback) {
         this.diffCallback = diffCallback;
         return this;
     }
 
     @Override
-    public final synchronized SlimViewHolder onCreateViewHolder(ViewGroup parent, int viewType) {
+    public SlimViewHolder onCreateViewHolder(ViewGroup parent, int viewType) {
+        if (viewType == TYPE_LOAD_MORE) {
+            return new SlimExLoadMoreViewHolder(moreLoader.getLoadMoreView());
+        }
         Type dataType = dataTypes.get(viewType);
         IViewHolderCreator creator = creators.get(dataType);
         if (creator == null) {
@@ -77,7 +140,7 @@ public class SlimAdapter extends AbstractSlimAdapter {
         }
         if (creator == null) {
             if (defaultCreator == null) {
-                throw new IllegalArgumentException("Neither the TYPE not The DEFAULT injector found...");
+                throw new IllegalArgumentException(String.format("Neither the TYPE: %s not The DEFAULT injector found...", dataType));
             }
             creator = defaultCreator;
         }
@@ -110,9 +173,6 @@ public class SlimAdapter extends AbstractSlimAdapter {
         return false;
     }
 
-    public static SlimAdapter create() {
-        return new SlimAdapter();
-    }
 
     public SlimAdapter registerDefault(final int layoutRes, final SlimInjector slimInjector) {
         defaultCreator = new IViewHolderCreator() {
@@ -166,14 +226,19 @@ public class SlimAdapter extends AbstractSlimAdapter {
         return null;
     }
 
-    public SlimAdapter attachTo(RecyclerView recyclerView) {
-        recyclerView.setAdapter(this);
+    public SlimAdapter attachTo(RecyclerView... recyclerViews) {
+        for (RecyclerView recyclerView : recyclerViews) {
+            recyclerView.setAdapter(this);
+        }
         return this;
     }
 
     @Override
-    public final int getItemViewType(int position) {
-        Object item = getItem(position);
+    public int getItemViewType(int position) {
+        if (moreLoader != null && position == data.size()) {
+            return TYPE_LOAD_MORE;
+        }
+        Object item = data.get(position);
         int index = dataTypes.indexOf(item.getClass());
         if (index == -1) {
             dataTypes.add(item.getClass());
@@ -184,6 +249,29 @@ public class SlimAdapter extends AbstractSlimAdapter {
 
     private interface IViewHolderCreator<T> {
         SlimAdapter.SlimTypeViewHolder<T> create(ViewGroup parent);
+    }
+
+    public SlimAdapter enableLoadMore(SlimMoreLoader slimMoreLoader) {
+        this.moreLoader = slimMoreLoader;
+        slimMoreLoader.setSlimAdapter(this);
+        notifyDataSetChanged();
+        return this;
+    }
+
+    @Override
+    public void onAttachedToRecyclerView(RecyclerView recyclerView) {
+        super.onAttachedToRecyclerView(recyclerView);
+        if (moreLoader != null) {
+            recyclerView.addOnScrollListener(moreLoader);
+        }
+    }
+
+    @Override
+    public void onDetachedFromRecyclerView(RecyclerView recyclerView) {
+        if (moreLoader != null) {
+            recyclerView.removeOnScrollListener(moreLoader);
+        }
+        super.onDetachedFromRecyclerView(recyclerView);
     }
 
     private static abstract class SlimTypeViewHolder<T> extends SlimViewHolder<T> {

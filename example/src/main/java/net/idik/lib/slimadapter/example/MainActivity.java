@@ -2,6 +2,7 @@ package net.idik.lib.slimadapter.example;
 
 import android.graphics.Color;
 import android.os.Bundle;
+import android.os.SystemClock;
 import android.support.v7.app.AppCompatActivity;
 import android.support.v7.widget.GridLayoutManager;
 import android.support.v7.widget.RecyclerView;
@@ -12,12 +13,15 @@ import android.widget.ImageView;
 import com.bumptech.glide.Glide;
 
 import net.idik.lib.slimadapter.SlimAdapter;
-import net.idik.lib.slimadapter.SlimDiffUtil;
 import net.idik.lib.slimadapter.SlimInjector;
+import net.idik.lib.slimadapter.SlimAdapterEx;
+import net.idik.lib.slimadapter.ex.loadmore.SimpleLoadMoreViewCreator;
+import net.idik.lib.slimadapter.ex.loadmore.SlimMoreLoader;
 import net.idik.lib.slimadapter.viewinjector.IViewInjector;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Random;
 
 public class MainActivity extends AppCompatActivity {
 
@@ -62,7 +66,7 @@ public class MainActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        currentData = data;
+        currentData = new ArrayList<>(data);
 
         recyclerView = (RecyclerView) findViewById(R.id.recyler_view);
         GridLayoutManager gridLayoutManager = new GridLayoutManager(this, 3);
@@ -109,21 +113,31 @@ public class MainActivity extends AppCompatActivity {
                                 .image(R.id.cover, data.getCoverRes());
                     }
                 })
-                .setDiffCallback(new SlimDiffUtil.Callback() {
+                .enableDiff()
+                .enableLoadMore(new SlimMoreLoader(this, new SimpleLoadMoreViewCreator(this).setNoMoreHint("没有更多数据了...")) {
                     @Override
-                    public boolean areItemsTheSame(Object oldItem, Object newItem) {
-                        return oldItem.equals(newItem);
+                    protected void onLoadMore(Handler handler) {
+                        SystemClock.sleep(3_000L);
+                        if (random.nextInt(10) > 7) {
+                            handler.error();
+                        } else {
+                            handler.loadCompleted(data1);
+                            loadTime++;
+                        }
                     }
 
                     @Override
-                    public boolean areContentsTheSame(Object oldItem, Object newItem) {
-                        return true;
+                    protected boolean hasMore() {
+                        return loadTime < 3;
                     }
                 })
                 .attachTo(recyclerView);
 
         slimAdapter.updateData(currentData);
     }
+
+    private Random random = new Random(System.currentTimeMillis());
+    private int loadTime = 0;
 
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
@@ -135,7 +149,8 @@ public class MainActivity extends AppCompatActivity {
     public boolean onOptionsItemSelected(MenuItem item) {
         switch (item.getItemId()) {
             case R.id.action_change_data:
-                currentData = currentData == data ? data1 : data;
+                loadTime = 0;
+                currentData = currentData == data ? new ArrayList<>(data1) : new ArrayList<>(data);
                 slimAdapter.updateData(currentData);
                 return true;
             default:
