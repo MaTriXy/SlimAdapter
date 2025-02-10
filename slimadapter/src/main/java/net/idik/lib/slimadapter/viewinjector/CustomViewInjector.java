@@ -2,8 +2,10 @@ package net.idik.lib.slimadapter.viewinjector;
 
 import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
-import android.support.annotation.NonNull;
-import android.support.v7.widget.RecyclerView;
+import android.os.Build;
+import androidx.annotation.NonNull;
+import androidx.annotation.RequiresApi;
+import androidx.recyclerview.widget.RecyclerView;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Adapter;
@@ -165,6 +167,12 @@ public abstract class CustomViewInjector<CVI extends IViewInjector> implements I
 
     @Override
     public CVI selected(int id, boolean selected) {
+        return null;
+    }
+
+    @RequiresApi(Build.VERSION_CODES.HONEYCOMB)
+    @Override
+    public CVI activated(int id, boolean activated) {
         return null;
     }
 
